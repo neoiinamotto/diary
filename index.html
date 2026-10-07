@@ -112,6 +112,7 @@ input[type=text],input[type=number],select{background:var(--paper);border:1px so
     <button id="btnCloud" class="primary">Googleでログインして同期</button>
     <button id="btnCloudOff">同期を解除</button>
   </div>
+  <label style="display:block;font-size:.85rem;margin:8px 0"><input type="checkbox" id="autoSync" checked> 起動時に自動で同期する（オフにすると、右上の「☁」を押したときだけ同期）</label>
   <p id="cloudState" style="font-size:.85rem;margin:6px 0"></p>
   <p style="font-size:.8rem;color:var(--muted)">マイドライブ直下に <code>10year-diary.json</code> が作られ、どの端末でも同じ内容に統合されます（新しく編集した方が優先）。</p>
   <p style="margin:16px 0 4px">PCのDriveフォルダに保存（PCのChrome/Edgeのみ・任意。スマホでは不要）</p>
@@ -155,7 +156,7 @@ function persist(){
   try { ls.set(KEY, JSON.stringify(store)); setStatus("保存しました"); }
   catch(e){ setStatus("保存に失敗しました（容量またはプライベートモード）"); }
   writeDrive();
-  clearTimeout(persist.cloudT); persist.cloudT = setTimeout(() => CLOUD.on && syncCloud(false), 2000);
+  clearTimeout(persist.cloudT); persist.cloudT = setTimeout(() => wantSync() && syncCloud(false), 2000);
 }
 
 /* ---- Googleドライブ同期（スマホ対応：Google ログイン + Drive API） ---- */
@@ -166,7 +167,11 @@ const CLOUD = {
   token: null, exp: 0, busy: false, again: false,
   fileId: ls.get("diary10:fid") || "",
   on: ls.get("diary10:cloud") === "1",
+  hint: ls.get("diary10:hint") || "",
+  auto: ls.get("diary10:auto") !== "0", // 起動時に自動同期（既定ON）
 };
+const tokenAlive = () => CLOUD.token && Date.now() < CLOUD.exp - 60000;
+const wantSync = () => CLOUD.on && (CLOUD.auto || tokenAlive());
 function cloudMsg(t){
   const b = document.getElementById("btnSync"); if (b) b.textContent = "☁ " + t;
   const e = document.getElementById("cloudState"); if (e) e.textContent = t;
@@ -178,6 +183,7 @@ function getToken(){
     if (!CLOUD.clientId) return rej(new Error("クライアントIDが未設定です"));
     google.accounts.oauth2.initTokenClient({
       client_id: CLOUD.clientId,
+      hint: CLOUD.hint || undefined,
       scope: "https://www.googleapis.com/auth/drive.file",
       callback: r => { if (r.error) return rej(new Error(r.error)); CLOUD.token = r.access_token; CLOUD.exp = Date.now() + r.expires_in*1000; res(r.access_token); },
       error_callback: e => rej(new Error(e.type || "ログインがキャンセルされました")),
@@ -227,6 +233,12 @@ async function syncCloud(interactive){
       CLOUD.fileId = c.id;
     }
     ls.set("diary10:fid", CLOUD.fileId);
+    if (!CLOUD.hint){
+      try {
+        const u = await (await gapi("https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)")).json();
+        if (u.user && u.user.emailAddress){ CLOUD.hint = u.user.emailAddress; ls.set("diary10:hint", CLOUD.hint); }
+      } catch(e){}
+    }
     CLOUD.on = true; ls.set("diary10:cloud", "1");
     cloudMsg("同期済 " + new Date().toLocaleTimeString("ja-JP", {hour:"2-digit", minute:"2-digit"}));
   } catch(e){
@@ -286,12 +298,15 @@ async function connectDrive(){
 const cidInput = document.getElementById("cid");
 cidInput.value = CLOUD.clientId;
 function saveCid(){ const v = cidInput.value.trim(); if (v !== CLOUD.clientId){ CLOUD.clientId = v; CLOUD.token = null; ls.set("diary10:cid", v); } }
+const autoBox = document.getElementById("autoSync");
+autoBox.checked = CLOUD.auto;
+autoBox.onchange = () => { CLOUD.auto = autoBox.checked; ls.set("diary10:auto", CLOUD.auto ? "1" : "0"); };
 document.getElementById("btnCloud").onclick = () => { saveCid(); syncCloud(true); };
 document.getElementById("btnSync").onclick = () => { if (CLOUD.on || CLOUD.clientId) syncCloud(true); else document.getElementById("btnSettings").click(); };
-document.getElementById("btnCloudOff").onclick = () => { CLOUD.on = false; CLOUD.token = null; CLOUD.fileId = ""; ls.del("diary10:cloud"); ls.del("diary10:fid"); cloudMsg("未接続"); };
+document.getElementById("btnCloudOff").onclick = () => { CLOUD.on = false; CLOUD.token = null; CLOUD.fileId = ""; CLOUD.hint = ""; ls.del("diary10:hint"); ls.del("diary10:cloud"); ls.del("diary10:fid"); cloudMsg("未接続"); };
 cloudMsg(CLOUD.on ? "要接続（タップ）" : "未接続");
-window.addEventListener("load", () => { if (CLOUD.on) syncCloud(false); });
-document.addEventListener("visibilitychange", () => { if (!document.hidden && CLOUD.on) syncCloud(false); });
+window.addEventListener("load", () => { if (wantSync()) syncCloud(false); });
+document.addEventListener("visibilitychange", () => { if (!document.hidden && wantSync()) syncCloud(false); });
 document.getElementById("btnDrive").onclick = connectDrive;
 document.getElementById("btnDriveOff").onclick = async () => { dirHandle = null; await idb("readwrite", s => s.delete("dir")); driveMsg("未接続"); };
 (async () => {
