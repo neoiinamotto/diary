@@ -433,9 +433,11 @@ function render(){
       const lh = () => parseFloat(getComputedStyle(ta).lineHeight) || 28;
       const grow = document.createElement("button"); grow.className = "sz"; grow.textContent = "＋3行"; grow.title = "入力欄を3行分広げる";
       grow.addEventListener("click", () => { ta.style.height = (ta.offsetHeight + lh()*3) + "px"; });
+      const full = document.createElement("button"); full.className = "sz"; full.textContent = "全部表示"; full.title = "本文が全部見える大きさに広げる";
+      full.addEventListener("click", () => { ta.style.height = "auto"; ta.style.height = Math.max(ta.scrollHeight + 4, 72) + "px"; });
       const shrink = document.createElement("button"); shrink.className = "sz"; shrink.textContent = "元に戻す"; shrink.title = "入力欄を最初の大きさに戻す";
       shrink.addEventListener("click", () => { ta.style.height = ""; });
-      const sizes = document.createElement("span"); sizes.className = "sizes"; sizes.append(grow, shrink);
+      const sizes = document.createElement("span"); sizes.className = "sizes"; sizes.append(grow, full, shrink);
       meta.append(mood, sizes, count);
       body.append(head, ta, meta);
     }
