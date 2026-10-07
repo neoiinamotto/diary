@@ -104,7 +104,7 @@ input[type=text],input[type=number],select{background:var(--paper);border:1px so
 
 <dialog id="dlgSettings">
   <div class="dlg-head"><b>設定・バックアップ</b><button data-close>閉じる</button></div>
-  <p style="margin:12px 0 4px">開始年（この年から10年分を表示）</p>
+  <p style="margin:12px 0 4px">一番上に表示する年（そこから過去へ10年分）</p>
   <select id="startYear"></select>
   <p style="margin:16px 0 4px">Googleドライブと同期（PC・スマホ共通）</p>
   <input type="text" id="cid" placeholder="Google OAuth クライアントID (xxxx.apps.googleusercontent.com)">
@@ -125,7 +125,7 @@ input[type=text],input[type=number],select{background:var(--paper);border:1px so
   <p style="margin:16px 0 4px">バックアップ</p>
   <div class="tools">
     <button id="btnExport">書き出し (JSON)</button>
-    <button id="btnImport">読み込み</button>
+    <button id="btnImport">読み込み（統合）</button>
     <input type="file" id="file" accept="application/json" hidden>
   </div>
   <p style="font-size:.8rem;color:var(--muted)">データはこのブラウザ内（localStorage）にのみ保存されます。ブラウザのデータを消すと失われるので、時々書き出してください。</p>
@@ -144,12 +144,14 @@ const MOODS = ["", "😊", "😐", "😢", "😠", "😴", "🥳"];
 const WD = ["日","月","火","水","木","金","土"];
 
 let store = load();
+// 一番上に表示する年（未設定なら今年）。以前の startYear 設定は使わない
+const topYear = () => store.top || new Date().getFullYear();
 let cur = new Date(); cur.setHours(0,0,0,0);
 let calMonth = new Date(cur.getFullYear(), cur.getMonth(), 1);
 
 function load(){
   try { const d = JSON.parse(ls.get(KEY)); if (d && d.entries) return d; } catch(e){}
-  return { startYear: new Date().getFullYear(), entries: {} };
+  return { entries: {} };
 }
 let saveTimer;
 function persist(){
@@ -196,11 +198,11 @@ async function gapi(url, opt = {}){
   if (!r.ok && r.status !== 404) throw new Error("Drive API " + r.status);
   return r;
 }
-function mergeRemote(remote){
+function mergeRemote(remote, force){
   let changed = false;
   for (const [k, e] of Object.entries(remote.entries || {})){
     const l = store.entries[k];
-    if (!l || (e.t||0) > (l.t||0)){ store.entries[k] = e; changed = true; }
+    if (force || !l || (e.t||0) > (l.t||0)){ store.entries[k] = e; changed = true; }
   }
   return changed;
 }
@@ -285,7 +287,7 @@ async function connectDrive(){
     const remote = await readDrive();
     if (remote && remote.entries && Object.keys(remote.entries).length &&
         confirm("このフォルダに既存の日記データがあります。\nOK＝Driveのデータを読み込む\nキャンセル＝この端末のデータでDriveを上書き")){
-      store = { startYear: remote.startYear || store.startYear, entries: remote.entries };
+      store = { top: store.top, entries: remote.entries };
       render();
     }
     persist();
@@ -315,7 +317,7 @@ document.getElementById("btnDriveOff").onclick = async () => { dirHandle = null;
     if (dirHandle){
       const ok = (await dirHandle.queryPermission({mode:"readwrite"})) === "granted";
       driveMsg(ok ? `接続中：${dirHandle.name}／${FILE}` : "再接続が必要です（「Driveフォルダを選択」を押すと許可できます）");
-      if (ok){ const r = await readDrive(); if (r && r.entries && JSON.stringify(r.entries)!==JSON.stringify(store.entries) && confirm("Googleドライブ上のデータが見つかりました。読み込みますか？（キャンセルで現在のデータを保持）")){ store={startYear:r.startYear||store.startYear,entries:r.entries}; render(); } }
+      if (ok){ const r = await readDrive(); if (r && r.entries && JSON.stringify(r.entries)!==JSON.stringify(store.entries) && confirm("Googleドライブ上のデータが見つかりました。読み込みますか？（キャンセルで現在のデータを保持）")){ store={top:store.top,entries:r.entries}; render(); } }
     } else driveMsg("未接続");
   } catch(e){ driveMsg("未接続"); }
 })();
@@ -328,13 +330,13 @@ const validDate = (y,m,d) => { const t=new Date(y,m-1,d); return t.getFullYear()
 function render(){
   const m = cur.getMonth()+1, d = cur.getDate();
   document.getElementById("dateLabel").innerHTML =
-    `${m}月${d}日<small>${store.startYear}年 〜 ${store.startYear+9}年</small>`;
+    `${m}月${d}日<small>${topYear()}年 〜 ${topYear()-9}年</small>`;
   const page = document.getElementById("page");
   page.innerHTML = "";
   const today = new Date(); today.setHours(0,0,0,0);
 
   for (let i=0;i<10;i++){
-    const y = store.startYear + i;
+    const y = topYear() - i;
     const row = document.createElement("div");
     row.className = "row";
     const ok = validDate(y,m,d);
@@ -426,7 +428,7 @@ document.querySelectorAll("dialog").forEach(dl => dl.addEventListener("click", e
 /* calendar */
 const dlgCal = document.getElementById("dlgCal");
 function hasEntry(m,d){
-  for (let i=0;i<10;i++){ const e = store.entries[keyOf(store.startYear+i,m,d)]; if (e && (e.text||e.mood||e.title||e.weather)) return true; }
+  for (let i=0;i<10;i++){ const e = store.entries[keyOf(topYear()-i,m,d)]; if (e && (e.text||e.mood||e.title||e.weather)) return true; }
   return false;
 }
 function renderCal(){
@@ -474,9 +476,9 @@ document.getElementById("q").addEventListener("input", doSearch);
 /* settings */
 const sel = document.getElementById("startYear");
 const thisYear = new Date().getFullYear();
-for (let y=thisYear-30; y<=thisYear+5; y++){ const o=document.createElement("option"); o.value=y; o.textContent=`${y}年 〜 ${y+9}年`; sel.appendChild(o); }
-document.getElementById("btnSettings").onclick = () => { sel.value = store.startYear; document.getElementById("dlgSettings").showModal(); };
-sel.onchange = () => { store.startYear = +sel.value; persist(); render(); };
+for (let y=thisYear+5; y>=thisYear-30; y--){ const o=document.createElement("option"); o.value=y; o.textContent=`${y}年${y===thisYear?"（今年）":""} 〜 ${y-9}年`; sel.appendChild(o); }
+document.getElementById("btnSettings").onclick = () => { sel.value = topYear(); document.getElementById("dlgSettings").showModal(); };
+sel.onchange = () => { store.top = +sel.value; persist(); render(); };
 document.getElementById("btnExport").onclick = () => {
   const blob = new Blob([JSON.stringify(store,null,2)], {type:"application/json"});
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
@@ -489,9 +491,13 @@ document.getElementById("file").onchange = async ev => {
   try {
     const d = JSON.parse(await f.text());
     if (!d.entries || typeof d.entries!=="object") throw 0;
-    if (!confirm("現在のデータを読み込んだ内容で置き換えます。よろしいですか？")) return;
-    store = { startYear: d.startYear || store.startYear, entries: d.entries };
+    const n = Object.keys(d.entries).length;
+    if (!confirm(`${n}日分の日記を読み込んで、現在のデータと統合します。
+同じ日は、新しく更新された方を残します（変換ファイルの場合は、同じ日をファイルの内容で上書きします）。よろしいですか？`)) return;
+    const before = Object.keys(store.entries).length;
+    mergeRemote(d, d.overwrite === true);
     persist(); render(); document.getElementById("dlgSettings").close();
+    alert(`統合しました（${before}日 → ${Object.keys(store.entries).length}日）`);
   } catch(e){ alert("読み込めないファイルです"); }
   ev.target.value = "";
 };
