@@ -7,11 +7,11 @@
 <style>
 :root{
   --bg:#f6f1e7; --paper:#fffdf8; --ink:#2f2a24; --muted:#8a8073; --line:#e4dccb;
-  --accent:#9b3d2e; --accent-soft:#f3ddd6; --now:#fff4d6;
+  --accent:#9b3d2e; --accent-soft:#f3ddd6; --now:#fff4d6; --hol:#fdeaee;
 }
 @media (prefers-color-scheme: dark){
   :root{ --bg:#1f1c18; --paper:#2a2621; --ink:#ece4d6; --muted:#9a8f80; --line:#3b362f;
-    --accent:#e08a74; --accent-soft:#4a2f28; --now:#3a3220; }
+    --accent:#e08a74; --accent-soft:#4a2f28; --now:#3a3220; --hol:#3b2a30; }
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);
@@ -31,7 +31,9 @@ button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
   box-shadow:0 2px 8px rgba(0,0,0,.06);overflow:hidden}
 .row{display:grid;grid-template-columns:86px 1fr;border-bottom:1px solid var(--line)}
 .row:last-child{border-bottom:0}
-.row.now{background:var(--now)}
+.row.hol{background:var(--hol)}
+.row.now{background:var(--now);box-shadow:inset 5px 0 0 var(--accent)}
+.row.now.hol{background:linear-gradient(90deg,var(--hol),var(--now))}
 .row.future{opacity:.55}
 .label{padding:10px;border-right:1px solid var(--line);text-align:center}
 .label b{display:block;font-size:1.05rem}
@@ -323,6 +325,45 @@ document.getElementById("btnDriveOff").onclick = async () => { dirHandle = null;
 })();
 function setStatus(t){ const s=document.getElementById("status"); s.textContent=t; clearTimeout(setStatus.t); setStatus.t=setTimeout(()=>s.textContent="",1800); }
 
+/* 日本の祝日（振替休日・国民の休日・特例年を含む） */
+const holCache = {};
+function holidaysOf(y){
+  if (holCache[y]) return holCache[y];
+  const h = new Set(), add = (m,d) => h.add(m*100+d);
+  const nthMon = (m,n) => { const f = new Date(y,m-1,1).getDay(); return 1 + (8-f)%7 + (n-1)*7; };
+  const eq = (c) => Math.floor(c + 0.242194*(y-1980) - Math.floor((y-1980)/4));
+  add(1,1);
+  if (y>=2000) add(1,nthMon(1,2)); else add(1,15);
+  add(2,11);
+  if (y>=2020) add(2,23);
+  if (y>=1989 && y<=2018) add(12,23);
+  add(3,eq(20.8431));
+  add(4,29);
+  if (y>=2007) { add(5,3); add(5,4); add(5,5); } else { add(5,3); add(5,5); }
+  if (y===2019) add(5,1);
+  if (y===2020) add(7,23); else if (y===2021) add(7,22); else if (y>=2003) add(7,nthMon(7,3)); else if (y>=1996) add(7,20);
+  if (y===2020) add(8,10); else if (y===2021) add(8,9); else if (y>=2016) add(8,11);
+  if (y>=2003) add(9,nthMon(9,3)); else if (y>=1966) add(9,15);
+  add(9,eq(23.2488));
+  if (y===2020) add(7,24); else if (y===2021) add(7,23); else if (y>=2000) add(10,nthMon(10,2)); else if (y>=1966) add(10,10);
+  if (y===2019) add(10,22);
+  add(11,3); add(11,23);
+  // 国民の休日（祝日に挟まれた平日）
+  const base = [...h];
+  for (const k of base){ const m=Math.floor(k/100), d=k%100;
+    const n = new Date(y,m-1,d+2), mid = new Date(y,m-1,d+1);
+    if (h.has((n.getMonth()+1)*100+n.getDate()) && mid.getDay()!==0 && !h.has((mid.getMonth()+1)*100+mid.getDate())) h.add((mid.getMonth()+1)*100+mid.getDate());
+  }
+  // 振替休日（日曜の祝日は、次の祝日でない日）
+  for (const k of [...h]){ const m=Math.floor(k/100), d=k%100;
+    if (new Date(y,m-1,d).getDay()===0){ let x=1, t;
+      do { t = new Date(y,m-1,d+x++); } while (h.has((t.getMonth()+1)*100+t.getDate()));
+      if (t.getFullYear()===y) h.add((t.getMonth()+1)*100+t.getDate());
+    }
+  }
+  return holCache[y] = h;
+}
+const isHoliday = (y,m,d) => holidaysOf(y).has(m*100+d);
 const pad = n => String(n).padStart(2,"0");
 const keyOf = (y,m,d) => `${y}-${pad(m)}-${pad(d)}`;
 const validDate = (y,m,d) => { const t=new Date(y,m-1,d); return t.getFullYear()===y && t.getMonth()===m-1 && t.getDate()===d; };
@@ -343,10 +384,12 @@ function render(){
     const dt = ok ? new Date(y,m-1,d) : null;
     if (ok && dt.getTime()===today.getTime()) row.classList.add("now");
     if (ok && dt>today) row.classList.add("future");
+    const hol = ok && isHoliday(y,m,d);
+    if (ok && (hol || dt.getDay()===0 || dt.getDay()===6)) row.classList.add("hol");
 
     const label = document.createElement("div");
     label.className = "label";
-    label.innerHTML = `<b>${y}</b><span>${ok ? WD[dt.getDay()]+"曜日" : ""}</span>`;
+    label.innerHTML = `<b>${y}</b><span>${ok ? WD[dt.getDay()]+"曜日"+(hol && dt.getDay()!==0 && dt.getDay()!==6 ? "・祝" : "") : ""}</span>`;
     row.appendChild(label);
 
     const body = document.createElement("div");
